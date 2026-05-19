@@ -8,6 +8,7 @@ import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Download, Play, Settings } from 'lucide-react';
+import { LangToolsDialog } from '@/components/LangToolsDialog';
 
 const EXAMPLE_TEXT = `S
   NP
@@ -163,6 +164,10 @@ export default function Home() {
                   step={1}
                   className="py-1"
                 />
+              </div>
+
+              <div className="pt-1 border-t">
+                <LangToolsDialog />
               </div>
             </CardContent>
           </Card>
