@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wrench, Plus, Trash2 } from "lucide-react";
+import { Wrench, Plus, Trash2, ArrowRight, ChevronRight } from "lucide-react";
 
 const CONSONANTS = [
   { ipa: "p", label: "p" }, { ipa: "b", label: "b" }, { ipa: "t", label: "t" },
@@ -29,7 +29,21 @@ const VOWELS = [
   { ipa: "æ", label: "æ" }, { ipa: "ʌ", label: "ʌ" }, { ipa: "ɔ", label: "ɔ" },
 ];
 
+const VOWEL_SET = new Set(VOWELS.map(v => v.ipa));
+const CONSONANT_SET = new Set(CONSONANTS.map(c => c.ipa));
+
 const PRESET_SYLLABLES = ["CV", "CVC", "CVCC", "CCV", "CCVC", "V", "VC"];
+
+const ENVIRONMENT_OPTIONS = [
+  { value: "always",          label: "항상" },
+  { value: "intervocalic",    label: "모음 사이 (V_V)" },
+  { value: "word-initial",    label: "어두 (단어 처음)" },
+  { value: "word-final",      label: "어말 (단어 끝)" },
+  { value: "before-vowel",    label: "모음 앞" },
+  { value: "after-vowel",     label: "모음 뒤" },
+  { value: "before-consonant",label: "자음 앞" },
+  { value: "after-consonant", label: "자음 뒤" },
+];
 
 interface LexEntry {
   id: number;
@@ -38,7 +52,82 @@ interface LexEntry {
   pos: string;
 }
 
+interface SoundRule {
+  id: number;
+  from: string;
+  to: string;
+  env: string;
+  note: string;
+}
+
 const POS_OPTIONS = ["명사", "동사", "형용사", "부사", "접속사", "전치사", "기타"];
+
+function isVowelChar(ch: string): boolean {
+  return VOWEL_SET.has(ch);
+}
+
+function isConsonantChar(ch: string): boolean {
+  return CONSONANT_SET.has(ch);
+}
+
+function applyRule(word: string, rule: SoundRule): string {
+  const { from, to, env } = rule;
+  if (!from) return word;
+
+  const chars = [...word];
+  let result = "";
+
+  let i = 0;
+  while (i < chars.length) {
+    const slice = word.slice(i);
+    if (!slice.startsWith(from)) {
+      result += chars[i];
+      i++;
+      continue;
+    }
+
+    const prev = result.length > 0 ? result[result.length - 1] : null;
+    const nextIdx = i + from.length;
+    const next = nextIdx < word.length ? word[nextIdx] : null;
+
+    let match = false;
+    switch (env) {
+      case "always":
+        match = true;
+        break;
+      case "intervocalic":
+        match = prev !== null && isVowelChar(prev) && next !== null && isVowelChar(next);
+        break;
+      case "word-initial":
+        match = i === 0;
+        break;
+      case "word-final":
+        match = nextIdx === word.length;
+        break;
+      case "before-vowel":
+        match = next !== null && isVowelChar(next);
+        break;
+      case "after-vowel":
+        match = prev !== null && isVowelChar(prev);
+        break;
+      case "before-consonant":
+        match = next !== null && isConsonantChar(next);
+        break;
+      case "after-consonant":
+        match = prev !== null && isConsonantChar(prev);
+        break;
+    }
+
+    result += match ? to : from;
+    i += from.length;
+  }
+
+  return result;
+}
+
+function applyAllRules(word: string, rules: SoundRule[]): string {
+  return rules.reduce((w, rule) => applyRule(w, rule), word);
+}
 
 export function LangToolsDialog() {
   const [selectedConsonants, setSelectedConsonants] = useState<Set<string>>(new Set());
@@ -48,12 +137,18 @@ export function LangToolsDialog() {
   const [wordOrder, setWordOrder] = useState("SOV");
   const [morphologyType, setMorphologyType] = useState("교착어");
   const [headDirection, setHeadDirection] = useState("핵어후치");
-  const [caseSuffix, setCaseSuffix] = useState(true);
   const [lexicon, setLexicon] = useState<LexEntry[]>([]);
   const [newWord, setNewWord] = useState("");
   const [newMeaning, setNewMeaning] = useState("");
   const [newPos, setNewPos] = useState("명사");
-  const [nextId, setNextId] = useState(1);
+  const [nextLexId, setNextLexId] = useState(1);
+
+  const [rules, setRules] = useState<SoundRule[]>([]);
+  const [ruleFrom, setRuleFrom] = useState("");
+  const [ruleTo, setRuleTo] = useState("");
+  const [ruleEnv, setRuleEnv] = useState("always");
+  const [ruleNote, setRuleNote] = useState("");
+  const [nextRuleId, setNextRuleId] = useState(1);
 
   const toggleConsonant = (ipa: string) => {
     setSelectedConsonants(prev => {
@@ -91,8 +186,8 @@ export function LangToolsDialog() {
 
   const addLexEntry = () => {
     if (!newWord.trim() || !newMeaning.trim()) return;
-    setLexicon(prev => [...prev, { id: nextId, word: newWord.trim(), meaning: newMeaning.trim(), pos: newPos }]);
-    setNextId(n => n + 1);
+    setLexicon(prev => [...prev, { id: nextLexId, word: newWord.trim(), meaning: newMeaning.trim(), pos: newPos }]);
+    setNextLexId(n => n + 1);
     setNewWord("");
     setNewMeaning("");
   };
@@ -113,9 +208,64 @@ export function LangToolsDialog() {
     URL.revokeObjectURL(url);
   };
 
+  const addRule = () => {
+    if (!ruleFrom.trim()) return;
+    setRules(prev => [...prev, {
+      id: nextRuleId,
+      from: ruleFrom.trim(),
+      to: ruleTo.trim(),
+      env: ruleEnv,
+      note: ruleNote.trim(),
+    }]);
+    setNextRuleId(n => n + 1);
+    setRuleFrom("");
+    setRuleTo("");
+    setRuleNote("");
+    setRuleEnv("always");
+  };
+
+  const removeRule = (id: number) => {
+    setRules(prev => prev.filter(r => r.id !== id));
+  };
+
+  const moveRule = (id: number, direction: -1 | 1) => {
+    setRules(prev => {
+      const idx = prev.findIndex(r => r.id === id);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const swap = idx + direction;
+      if (swap < 0 || swap >= next.length) return prev;
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      return next;
+    });
+  };
+
+  const ruleResults = useMemo(() =>
+    lexicon.map(entry => ({
+      ...entry,
+      derived: applyAllRules(entry.word, rules),
+    })),
+    [lexicon, rules]
+  );
+
+  const downloadDerived = () => {
+    if (ruleResults.length === 0) return;
+    const lines = ["원형\t변화형\t의미\t품사",
+      ...ruleResults.map(e => `${e.word}\t${e.derived}\t${e.meaning}\t${e.pos}`)];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "derived-lexicon.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const SectionTitle = ({ children }: { children: React.ReactNode }) => (
     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">{children}</p>
   );
+
+  const envLabel = (val: string) => ENVIRONMENT_OPTIONS.find(o => o.value === val)?.label ?? val;
 
   return (
     <Dialog>
@@ -132,11 +282,12 @@ export function LangToolsDialog() {
         </DialogHeader>
 
         <Tabs defaultValue="phonemes" className="flex-1 overflow-hidden flex flex-col">
-          <TabsList className="grid grid-cols-4 w-full shrink-0">
+          <TabsList className="grid grid-cols-5 w-full shrink-0">
             <TabsTrigger value="phonemes" data-testid="tab-phonemes">음소 목록</TabsTrigger>
             <TabsTrigger value="phonotactics" data-testid="tab-phonotactics">음절 구조</TabsTrigger>
             <TabsTrigger value="typology" data-testid="tab-typology">유형론</TabsTrigger>
             <TabsTrigger value="lexicon" data-testid="tab-lexicon">어휘집</TabsTrigger>
+            <TabsTrigger value="soundchange" data-testid="tab-soundchange">음운 규칙</TabsTrigger>
           </TabsList>
 
           {/* 음소 목록 */}
@@ -406,6 +557,149 @@ export function LangToolsDialog() {
                 </Button>
               </div>
             )}
+          </TabsContent>
+
+          {/* 음운 변화 규칙 */}
+          <TabsContent value="soundchange" className="flex-1 overflow-hidden flex flex-col mt-4 gap-4">
+            {/* 규칙 추가 */}
+            <div className="shrink-0 space-y-2">
+              <SectionTitle>새 규칙 추가</SectionTitle>
+              <p className="text-xs text-muted-foreground -mt-1 mb-2">
+                특정 환경에서 음소가 어떻게 바뀌는지 정의합니다. 규칙은 위에서 아래 순서로 적용됩니다.
+              </p>
+              <div className="flex gap-2 items-center">
+                <Input
+                  value={ruleFrom}
+                  onChange={e => setRuleFrom(e.target.value)}
+                  placeholder="변화 전 (예: p)"
+                  className="font-mono text-sm w-32 shrink-0"
+                  data-testid="input-rule-from"
+                />
+                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                <Input
+                  value={ruleTo}
+                  onChange={e => setRuleTo(e.target.value)}
+                  placeholder="변화 후 (예: b)"
+                  className="font-mono text-sm w-32 shrink-0"
+                  data-testid="input-rule-to"
+                />
+                <Select value={ruleEnv} onValueChange={setRuleEnv}>
+                  <SelectTrigger className="text-sm" data-testid="select-rule-env">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ENVIRONMENT_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={ruleNote}
+                  onChange={e => setRuleNote(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addRule()}
+                  placeholder="메모 (선택, 예: 유성음화)"
+                  className="text-sm"
+                  data-testid="input-rule-note"
+                />
+                <Button variant="default" onClick={addRule} data-testid="btn-add-rule" className="shrink-0">
+                  <Plus className="w-4 h-4 mr-1" />
+                  추가
+                </Button>
+              </div>
+            </div>
+
+            {/* 규칙 목록 */}
+            <div className="shrink-0">
+              {rules.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-3 border rounded-lg bg-muted/10">
+                  아직 규칙이 없습니다. 위에서 규칙을 추가하세요.
+                </p>
+              ) : (
+                <div className="border rounded-lg overflow-hidden">
+                  {rules.map((rule, idx) => (
+                    <div
+                      key={rule.id}
+                      className={`flex items-center gap-2 px-3 py-2 text-sm ${idx % 2 === 0 ? "bg-background" : "bg-muted/10"}`}
+                      data-testid={`row-rule-${rule.id}`}
+                    >
+                      <span className="text-xs text-muted-foreground w-4 shrink-0">{idx + 1}.</span>
+                      <span className="font-mono text-primary font-medium w-8">{rule.from || "∅"}</span>
+                      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <span className="font-mono text-primary font-medium w-8">{rule.to || "∅"}</span>
+                      <Badge variant="outline" className="text-xs shrink-0">{envLabel(rule.env)}</Badge>
+                      {rule.note && <span className="text-xs text-muted-foreground truncate flex-1">{rule.note}</span>}
+                      <div className="flex gap-1 ml-auto shrink-0">
+                        <button onClick={() => moveRule(rule.id, -1)} disabled={idx === 0}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors rotate-[-90deg]"
+                          data-testid={`btn-rule-up-${rule.id}`}>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => moveRule(rule.id, 1)} disabled={idx === rules.length - 1}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors rotate-90"
+                          data-testid={`btn-rule-down-${rule.id}`}>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => removeRule(rule.id)}
+                          className="text-muted-foreground hover:text-destructive transition-colors ml-1"
+                          data-testid={`btn-remove-rule-${rule.id}`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 적용 결과 */}
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <div className="flex items-center justify-between mb-2 shrink-0">
+                <SectionTitle>어휘집 적용 결과</SectionTitle>
+                {ruleResults.some(e => e.word !== e.derived) && (
+                  <Button variant="outline" size="sm" onClick={downloadDerived} data-testid="btn-download-derived">
+                    변화형 내보내기 (.txt)
+                  </Button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto border rounded-lg min-h-0">
+                {lexicon.length === 0 ? (
+                  <div className="flex items-center justify-center h-24 text-xs text-muted-foreground">
+                    어휘집 탭에서 단어를 추가하면 변화 결과가 여기 표시됩니다.
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/30 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">원형</th>
+                        <th className="px-2 py-2 text-muted-foreground text-xs"></th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">변화형</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">의미</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ruleResults.map((entry, idx) => {
+                        const changed = entry.word !== entry.derived;
+                        return (
+                          <tr key={entry.id} className={idx % 2 === 0 ? "bg-background" : "bg-muted/10"} data-testid={`row-result-${entry.id}`}>
+                            <td className="px-3 py-2 font-mono text-muted-foreground">{entry.word}</td>
+                            <td className="px-2 py-2 text-muted-foreground">
+                              <ArrowRight className="w-3 h-3" />
+                            </td>
+                            <td className={`px-3 py-2 font-mono font-medium ${changed ? "text-primary" : "text-muted-foreground"}`}>
+                              {entry.derived}
+                              {changed && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(변화)</span>}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">{entry.meaning}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
       </DialogContent>
