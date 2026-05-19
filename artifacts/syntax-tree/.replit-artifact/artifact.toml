@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "SVG 문법 트리 생성기"
+version = "1.0.0"
+id = "artifacts/syntax-tree"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18704
+
+[services.development]
+run = "pnpm --filter @workspace/syntax-tree run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/syntax-tree", "run", "build" ]
+publicDir = "artifacts/syntax-tree/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18704"
+BASE_PATH = "/"
